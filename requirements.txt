@@ -1,0 +1,8 @@
+# torch
+# torchvision
+
+einops
+packaging
+thop
+timm
+x-transformers
