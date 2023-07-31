@@ -686,7 +686,7 @@ class DiT_basic(nn.Module):
                                heads=None,
                                mlp_dim=None,
                                pool=pool,
-                               channels=3,
+                               channels=7, # for DOT it is 7 for US it is 3
                                dim_head=64,
                                dropout=0.4,
                                emb_dropout=0.,
@@ -723,7 +723,7 @@ class DiT_basic(nn.Module):
                               num_classes=2,
                               dim=256,
                               pool=pool,
-                              channels=3,
+                              channels=3, 
                               dim_head=64,
                               dropout=0.,
                               emb_dropout=0.,
@@ -810,7 +810,7 @@ class DiT_basic(nn.Module):
             # output probability of each class
             if self.output_type == 'probability':
                 out = self.softmax(out)
-                return out[:, 0]
+                return out[:, 1]
             elif self.output_type == 'score':
                 out = out
                 return out
@@ -837,7 +837,7 @@ if __name__ == '__main__':
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')    
     net.to(device)
     
-    train_dataset = pCRDataset(datatype='US',
+    train_dataset = pCRDataset(datatype='DOT',
                                 info_file='./1Patient_US_train.ods',
                                            root_dir='./Dataset/',
                                            cyc_num='1',
@@ -851,7 +851,7 @@ if __name__ == '__main__':
     train_loader = DataLoader(train_dataset, batch_size=16,
                         shuffle=True, num_workers=0)
     
-    test_dataset = pCRDataset(datatype='US',
+    test_dataset = pCRDataset(datatype='DOT',
                                 info_file='./1Patient_US_test.ods',
                                            root_dir='./Dataset/',
                                            cyc_num='1',
@@ -868,7 +868,7 @@ if __name__ == '__main__':
     Loss, Test_Acc_All = [],[]
     label_p,prob_p,box_prob=[],[],[]
     
-    num_epochs = 10
+    num_epochs = 20
     learning_rate = 1e-5
     optimizer = torch.optim.Adam(net.parameters(), lr=learning_rate, weight_decay=1e-5)
     
@@ -941,7 +941,7 @@ if __name__ == '__main__':
         Test_Acc_All.append(np.mean(Acc_test))
         
         
-        if epoch>=5:
+        if epoch>=10:
             cnts=test_dataset.us_num
             label_p+=[np.mean(Test_label[cnts[i]:cnts[i+1]]) for i in range(len(cnts)-1)]
             prob_p+=[np.mean(Prob[cnts[i]:cnts[i+1]]) for i in range(len(cnts)-1)] 
@@ -968,7 +968,7 @@ if __name__ == '__main__':
     plt.show()
     
     fig = plt.figure()
-    box_prob=np.reshape(prob_p,(2,7))
+    box_prob=np.reshape(prob_p,(10,7))
     bp = plt.boxplot(box_prob)
     ax = plt.gca()
-    ax.set_xticklabels(['P2','P7','P16','P26','P30','P36','P38'])
+    ax.set_xticklabels(['P2','P4','P6','P7','P8','P9','P10'])

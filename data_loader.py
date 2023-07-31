@@ -76,9 +76,9 @@ class pCRDataset(Dataset):
             cyc_image_path = os.path.join(cyc_path, sorted(os.listdir(cyc_path))[cyc_id])
             # read images
             pre_chemo_image = scipy.io.loadmat(pre_chemo_image_path)['hemo']
-            pre_chemo_image=pre_chemo_image/200
+            pre_chemo_image=pre_chemo_image
             cyc_image = scipy.io.loadmat(cyc_image_path)['hemo']
-            cyc_image=cyc_image/200
+            cyc_image=cyc_image
                 
         if self.transform:
             pre_chemo_image_tensor=self.transform(pre_chemo_image)
