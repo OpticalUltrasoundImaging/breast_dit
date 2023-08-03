@@ -13,10 +13,14 @@ from x_transformers import Encoder
 from timm.models.layers import DropPath, trunc_normal_
 from thop import profile
 from torch.autograd import Variable
+import torchvision.transforms.functional as TF
+from torchvision import transforms, utils
 import numpy as np
-
+from data_loader import pCRDataset
+from torch.utils.data import DataLoader
 import copy
-
+import sklearn.metrics as metrics
+import matplotlib.pyplot as plt
 
 # helpers
 
@@ -35,6 +39,10 @@ def cast_tuple(val, num):
 
 # classes
 
+# Custom transformation to convert a tensor to double type
+class ToDoubleTensor(object):
+    def __call__(self, pic):
+        return torch.tensor(pic, dtype=torch.float32)
 
 class RearrangeImage(nn.Module):
     def forward(self, x):
@@ -404,7 +412,7 @@ class DiT(nn.Module):
         if self.use_scale:
             # self.scale = nn.Parameter(torch.randn(1, 2)) # 当前最佳
             self.scale = nn.Sequential(
-                nn.Linear(4 * output_image_size ** 2, 4)
+                nn.Linear(2 * output_image_size ** 2, 2)
             )
             self.softmax = nn.Softmax(dim=1)
 
@@ -442,39 +450,30 @@ class DiT(nn.Module):
 
         return torch.FloatTensor(sinusoid_table).unsqueeze(0).cuda()
 
-    def forward(self, before_US, after_US, before_DOT, after_DOT):
+    def forward(self, before_x, after_x):
 
         if self.patch_emb == 'share':
-            before_US = self.to_patch_embedding(before_US)
-            after_US = self.to_patch_embedding(after_US)
-            before_DOT = self.to_patch_embedding(before_DOT)
-            after_DOT = self.to_patch_embedding(after_DOT)
+            before_x = self.to_patch_embedding(before_x)
+            after_x = self.to_patch_embedding(after_x)
         elif self.patch_emb == 'isolated':
-            before_US = self.to_patch_embedding_before(before_US)
-            after_US = self.to_patch_embedding_after(after_US)
-            before_DOT = self.to_patch_embedding_before(before_DOT)
-            after_DOT = self.to_patch_embedding_after(after_DOT)
+            before_x = self.to_patch_embedding_before(before_x)
+            after_x = self.to_patch_embedding_after(after_x)
 
-        b, n, _ = before_US.shape
+        b, n, _ = before_x.shape
 
         # 把cls token弄进去
         if self.pos_emb == 'share' or self.pos_emb == 'sin':
-            before_US += self.pos_embedding_before_and_after
-            after_US += self.pos_embedding_before_and_after
-            before_DOT += self.pos_embedding_before_and_after
-            after_DOT += self.pos_embedding_before_and_after
-            
+            before_x += self.pos_embedding_before_and_after
+            after_x += self.pos_embedding_before_and_after
         elif self.pos_emb == 'isolated':
-            before_US += self.pos_embedding_before
-            after_US += self.pos_embedding_after
-            before_DOT += self.pos_embedding_before
-            after_DOT += self.pos_embedding_after
+            before_x += self.pos_embedding_before
+            after_x += self.pos_embedding_after
 
         cls_tokens = repeat(self.cls_token, '() n d -> b n d', b=b)
         if not self.use_scale:
-            x = torch.cat((cls_tokens, before_US, after_US, before_DOT, after_DOT), dim=1)
+            x = torch.cat((cls_tokens, before_x, after_x), dim=1)
         else:
-            x = torch.cat((before_US, after_US, before_DOT, after_DOT), dim=1)
+            x = torch.cat((before_x, after_x), dim=1)
 
         if self.time_emb:
             if not self.use_scale:
@@ -496,7 +495,7 @@ class DiT(nn.Module):
             scale = self.scale(x.mean(dim=-1))
             scale = self.softmax(scale)
             # scale = scale.view(scale.shape[0], scale.shape[1], 1)
-            x = scale[0, 3] * x[:, 3*n:, :].mean(dim=1) + scale[0, 2] * x[:, 2*n:3*n, :].mean(dim=1) + scale[0, 1] * x[:, n:2*n, :].mean(dim=1) + scale[0, 0] * x[:, :n, :].mean(dim=1)
+            x = scale[0, 1] * x[:, n:, :].mean(dim=1) + scale[0, 0] * x[:, :n, :].mean(dim=1)
 
         x = self.to_latent(x)
             
@@ -643,7 +642,7 @@ class ViT_v2(nn.Module):
         return x
 
 
-class DiT_basic(nn.Module):
+class DiT_basic_part(nn.Module):
     def __init__(self,
                  basic_model='t2t',  # 使用vit还是t2t vit只支持both 因为其他的不需要消融探究
                  patch_emb='isolated',
@@ -655,9 +654,9 @@ class DiT_basic(nn.Module):
                  input_type='both',
                  label_type='MP',
                  output_type='probability',
-                 
+                 dataset='DOT',
                  ):
-        super(DiT_basic, self).__init__()
+        super(DiT_basic_part, self).__init__()
         print('basic_model: %s\n'
               'input_type: %s\n'
               'label_type: %s\n'
@@ -675,21 +674,25 @@ class DiT_basic(nn.Module):
         self.output_type = output_type
 
         self.feature_net = nn.Sequential()
-
+        self.dataset=dataset
+        if dataset=='DOT':
+            self.channel_num=7
+        elif dataset=='US':
+            self.channel_num=3
         # baseline模型是普通resnet18不做任何修改
-
+        
         if basic_model == 't2t':
             if input_type == 'both':
-                self.net = DiT(image_size=224,
+                self.net = DiT(image_size=128,
                                num_classes=2,
                                dim=256,
                                depth=None,
                                heads=None,
                                mlp_dim=None,
                                pool=pool,
-                               channels=3,
+                               channels=self.channel_num, # for DOT it is 7 for US it is 3
                                dim_head=64,
-                               dropout=0.,
+                               dropout=0.4,
                                emb_dropout=0.,
                                patch_emb=patch_emb,
                                pos_emb=pos_emb,
@@ -704,7 +707,7 @@ class DiT_basic(nn.Module):
                                
                                )
             else:
-                self.net = T2TViT(image_size=224,
+                self.net = T2TViT(image_size=128,
                                   num_classes=1,
                                   dim=256,
                                   pool=pool,
@@ -719,12 +722,12 @@ class DiT_basic(nn.Module):
                                                           mlp_dim=512),
                                   t2t_layers=((7, 4), (3, 2), (3, 2)))
         elif basic_model == 'vit':
-            self.net = ViT_v2(image_size=224,
+            self.net = ViT_v2(image_size=128,
                               patch_size=16,
                               num_classes=2,
                               dim=256,
                               pool=pool,
-                              channels=3,
+                              channels=3, 
                               dim_head=64,
                               dropout=0.,
                               emb_dropout=0.,
@@ -739,24 +742,15 @@ class DiT_basic(nn.Module):
 
         if self.input_type == 'both':
             self.fc = nn.Sequential(nn.LayerNorm(256),
-                                    nn.Linear(256, 2))
+                                    nn.Linear(256, 128))
         else:
             self.fc = nn.Sequential(nn.LayerNorm(256),
-                                    nn.Linear(256, 2))
+                                    nn.Linear(256, 128))
 
-        # loss函数和softmax
-        if label_type == 'MP':
-            weight = torch.tensor([1.0, 1.0])
-        elif label_type == 'LNM':
-            weight = torch.tensor([1.0, 1.0])
 
-        if loss_f == 'ce':
-            self.loss = nn.CrossEntropyLoss(weight=weight)
-        elif loss_f == 'focal':
-            self.loss = FocalLoss(class_num=2, alpha=weight, gamma=2)
-        self.softmax = nn.Softmax(dim=1)
 
         self._initialize_weights()
+        self.softmax = nn.Softmax(dim=1)
 
     def _initialize_weights(self):
         print("initialize weights for network!")
@@ -775,42 +769,102 @@ class DiT_basic(nn.Module):
                 nn.init.constant_(m.bias, 0)
                 nn.init.constant_(m.weight, 1.0)
 
-    def forward(self, before_US, after_US, before_DOT, after_DOT, labels_MP=None, labels_LNM=None):
-        before_US = self.feature_net(before_US)
-        after_US = self.feature_net(after_US)
-        before_DOT = self.feature_net(before_DOT)
-        after_DOT = self.feature_net(after_DOT)
+    def forward(self, before_x, after_x, labels=None):
+        before_x = self.feature_net(before_x)
+        after_x = self.feature_net(after_x)
 
         if self.input_type == 'before':
-            before_out = self.net(before_US)
+            before_out = self.net(before_x)
             out = before_out
         elif self.input_type == 'after':
-            after_out = self.net(after_US)
+            after_out = self.net(after_x)
             out = after_out
         elif self.input_type == 'both':
             # 两个都用before_net精度还不错
-            out = self.net(before_US, after_US, before_DOT, after_DOT)
+            out = self.net(before_x, after_x)
 
         out = out.view(out.shape[0], -1)
         out = self.fc(out)
+        '''
+        out = self.softmax(out)
+        if self.dataset=='US':            
+            out = 1-out
+        '''
+        return out
+        
 
-        if labels_MP is not None or labels_LNM is not None:  # training or validation process
+class DiT_basic(nn.Module):
+    def __init__(self,
+                 basic_model='t2t',  # 使用vit还是t2t vit只支持both 因为其他的不需要消融探究
+                 patch_emb='isolated',
+                 time_emb=True,
+                 pos_emb='share',
+                 use_scale=False,
+                 pool='cls',
+                 loss_f='focal',  # focal of ce
+                 input_type='both',
+                 label_type='MP',
+                 output_type='probability',
+                 ):
+        super(DiT_basic, self).__init__()
+        self.basic_model,self.patch_emb,self.time_emb,self.pos_emb,self.use_scale,self.pool, \
+            self.loss_f, self.input_type, self.label_type,self.output_type=basic_model,patch_emb,time_emb,pos_emb, \
+                use_scale,pool,loss_f,input_type,label_type,output_type
+        self.DOT_net=DiT_basic_part(basic_model=self.basic_model,  # 使用vit还是t2t vit只支持both 因为其他的不需要消融探究
+                        patch_emb=self.patch_emb,
+                        time_emb=self.time_emb,
+                        pos_emb=self.pos_emb,
+                        use_scale=self.use_scale,
+                        loss_f=self.loss_f,  # focal of ce
+                        input_type=self.input_type,
+                        pool=self.pool,
+                        output_type=self.output_type,
+                        dataset='DOT',
+                        )
+        self.US_net=DiT_basic_part(basic_model=self.basic_model,  # 使用vit还是t2t vit只支持both 因为其他的不需要消融探究
+                        patch_emb=self.patch_emb,
+                        time_emb=self.time_emb,
+                        pos_emb=self.pos_emb,
+                        use_scale=self.use_scale,
+                        loss_f=self.loss_f,  # focal of ce
+                        input_type=self.input_type,
+                        pool=self.pool,
+                        output_type=self.output_type,
+                        dataset='US',
+                        )
+        
+        
+        # loss函数和softmax
+        if label_type == 'MP':
+            weight = torch.tensor([1.0, 1.0])
+        elif label_type == 'LNM':
+            weight = torch.tensor([1.0, 1.0])
+
+        if loss_f == 'ce':
+            self.loss = nn.CrossEntropyLoss(weight=weight)
+        elif loss_f == 'focal':
+            self.loss = FocalLoss(class_num=2, alpha=weight, gamma=2)
+        self.softmax = nn.Softmax(dim=1)
+        self.fc = nn.Sequential(nn.LayerNorm(256),
+                                nn.Linear(256, 2))
+    def forward(self,before_DOT,after_DOT,before_US,after_US,labels=None):
+        out_DOT=self.DOT_net(before_DOT,after_DOT,labels=labels)
+        out_US=self.US_net(before_US,after_US,labels=labels)
+        out = torch.cat((out_DOT, out_US), dim=1)
+        out = self.fc(out)
+        if labels is not None:  # training or validation process
             # output loss and acc
-            labels_MP = labels_MP.view(-1)
-            labels_LNM = labels_LNM.view(-1)
+            labels = labels.view(-1)
+            #labels_onehot = torch.nn.functional.one_hot(labels,2).type('torch.FloatTensor').to(device)
             prob = self.softmax(out)
-            if self.label_type == 'MP':
-                # cls_loss = self.loss(out, labels_MP.float())
-                cls_loss = self.loss(out, labels_MP)
-            elif self.label_type == 'LNM':
-                cls_loss = self.loss(out, labels_LNM)
+            # cls_loss = self.loss(out, labels_MP.float())
+            cls_loss = self.loss(out, labels)
+            #cls_loss = self.loss(out, labels_onehot)
 
             _, predicted = torch.max(prob.data, 1)
             # predicted = prob.data > 0.5
-            if self.label_type == 'MP':
-                acc = (predicted == labels_MP).sum().item() / out.size(0)
-            elif self.label_type == 'LNM':
-                acc = (predicted == labels_LNM).sum().item() / out.size(0)
+            acc = (predicted == labels).sum().item() / out.size(0)
+
 
             return cls_loss, acc
         else:  # test process
@@ -819,16 +873,15 @@ class DiT_basic(nn.Module):
                 out = self.softmax(out)
                 return out[:, 1]
             elif self.output_type == 'score':
-                out = out
+                out = self.softmax(out)
                 return out
 
             return None
-
-
+        
 if __name__ == '__main__':
     
     
-    net = DiT_basic(basic_model='t2t',  # 使用vit还是t2t vit只支持both 因为其他的不需要消融探究
+    USDOT_net = DiT_basic(basic_model='t2t',  # 使用vit还是t2t vit只支持both 因为其他的不需要消融探究
                     patch_emb='isolated',
                     time_emb=True,
                     pos_emb='share',
@@ -841,24 +894,141 @@ if __name__ == '__main__':
                     )
     # net = ViT_basic(basic_model='t2t')
     
-    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-    p_feature = torch.randn(1,4)
-    p_feature=p_feature.to(device)
+    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')    
+    USDOT_net.to(device)
     
-    net.to(device)
+    train_dataset = pCRDataset(datatype='USDOT',
+                                info_file='./1Patient_US_train.ods',
+                                           root_dir='./Dataset/',
+                                           cyc_num='1',
+                                           transform=transforms.Compose([
+                                               transforms.ToTensor(),
+                                               ToDoubleTensor(),
+                                               transforms.RandomHorizontalFlip(p=0.5),
+                                               transforms.RandomRotation(degrees=(-45,45)),
+                                               transforms.Resize([128,128]),
+                                           ]))
+    train_loader = DataLoader(train_dataset, batch_size=40,
+                        shuffle=True, num_workers=0)
     
-    input = torch.randn(1, 3, 224, 224)
-    input = input.to(device)
+    test_dataset = pCRDataset(datatype='USDOT',
+                                info_file='./1Patient_US_test.ods',
+                                           root_dir='./Dataset/',
+                                           cyc_num='1',
+                                           transform=transforms.Compose([
+                                               transforms.ToTensor(),
+                                               ToDoubleTensor(),
+                                               transforms.Resize([128,128]),
+                                           ]))
+    test_loader = DataLoader(test_dataset, batch_size=40,
+                        shuffle=False, num_workers=0)
+    test_loader1 = DataLoader(test_dataset, batch_size=40,
+                        shuffle=True, num_workers=0)
     
+    Loss, Test_Acc_All = [],[]
+    label_p,prob_p,box_prob=[],[],[]
     
+    num_epochs = 10
+    learning_rate = 1e-4
+    optimizer = torch.optim.Adam(USDOT_net.parameters(), lr=learning_rate, weight_decay=1e-6)
     
-    p = net(input,input, input, input)
-    p.cpu().detach()
-    flops, params = profile(net, (input, input, input, input))
-    print('flops: ', flops, 'params: ', params)
-    # for n, p in net.named_parameters():
-    #     print(n, p)
+    best_pred = []
+    best_acc = 0
+    
+    for epoch in range(num_epochs):
+        for i, i_batch  in enumerate(train_loader):
+            USDOT_net.train()
+            image_batch = [i.to(device) for i in i_batch['image']]
+            label_batch = i_batch['labels'].to(device)
+    
+            optimizer.zero_grad()
+            loss,acc = USDOT_net(image_batch[0], image_batch[1], image_batch[2], image_batch[3],labels=label_batch)
+            
+            Loss.append(loss.item())
+            loss.backward()
+            #scheduler.step(loss)
+            optimizer.step()  
+            
+            '''
+            # test loss
+            with torch.no_grad():
+                net.eval()
+                # test data
+                test_batch = next(iter(test_loader1))
+                test_image = [i.to(device) for i in test_batch['image']]
+                test_label = test_batch['labels'].to(device)
+                test_loss,test_acc = net(test_image[0], test_image[1],labels=test_label)            
+                
+                if (i+1)%20==0:
+                    print('Epoch: {}. Batch: {}. Loss: {}. Accuracy: {}. Test_loss: {}. Test_acc: {}.'
+                          .format(epoch, i+1, loss.item(), acc, test_loss.item(), test_acc))
+            '''
+                
+            if (i+1)%20==0:
+                print('Epoch: {}. Batch: {}. Loss: {}. Accuracy: {}.'
+                      .format(epoch, i+1, loss.item(), acc))
+            
+        Prob, Predict, Test_label, Acc_test = [],[],[],[]
+        with torch.no_grad():
+            for i1, i_batch1 in enumerate(test_loader):
+                USDOT_net.eval()
+                test_batch = [i.to(device) for i in i_batch1['image']]
+                test_label = i_batch1['labels'].to(device)
+                prob = USDOT_net(test_batch[0], test_batch[1], test_batch[2], test_batch[3])
+                predicted = prob.data > 0.5
+                
+                test_acc = (predicted == test_label).sum().item() / predicted.size(0)
+                
+                prob=prob.tolist()
+                predicted=predicted.tolist()
+                test_label=test_label.tolist()
+                
+                Prob.extend(prob)
+                Predict.extend(predicted)
+                Test_label.extend(test_label)
+                Acc_test.append(test_acc)
+            
+            
+        print('Epoch: {}.  Test_acc: {}.'.format(epoch, np.mean(Acc_test)))
+        if (epoch+1)%10 == 0:
+            print('model saved')
+            #torch.save(model_coreg, model_PATH)
+        if np.mean(Acc_test)>best_acc:
+            best_acc=np.mean(Acc_test)
+            best_pred=Prob
+        
+        # test acc for epoch
+        Test_Acc_All.append(np.mean(Acc_test))
+        
+        
+        if epoch>=5:
+            cnts=test_dataset.usdot_num
+            label_p+=[np.round(np.mean(Test_label[(cnts[i]//100+2):(cnts[i+1]//100+2)])) for i in range(len(cnts)-1)]
+            prob_p+=[np.mean(Prob[(cnts[i]//100+2):(cnts[i+1]//100+2)]) for i in range(len(cnts)-1)] 
+            plt.figure()
+            plt.plot(Prob)
+            plt.plot(Test_label)
+    
 
-    # total_trainable_params = sum(
-    # p.numel() for p in net.parameters() if p.requires_grad)
-    # print(f'{total_trainable_params:,} training parameters.')
+    plt.figure()
+    plt.plot(Test_Acc_All)
+    
+    fig = plt.figure()
+    # calculate the fpr and tpr for all thresholds of the classification
+    fpr, tpr, threshold = metrics.roc_curve(Test_label, best_pred)
+    roc_auc = metrics.auc(fpr, tpr)
+    plt.title('Receiver Operating Characteristic')
+    plt.plot(fpr, tpr, 'b', label = 'AUC = %0.4f' % roc_auc)
+    plt.legend(loc = 'lower right')
+    plt.plot([0, 1], [0, 1],'r--')
+    plt.xlim([0, 1])
+    plt.ylim([0, 1])
+    plt.ylabel('True Positive Rate')
+    plt.xlabel('False Positive Rate')
+    plt.show()
+    
+    fig = plt.figure()
+    box_prob=np.reshape(prob_p,(5,10))
+    bp = plt.boxplot(box_prob)
+    ax = plt.gca()
+    ax.set_xticklabels(['P2','P7','P13','P16','P25','P26','P30','P36','P38','P39'])

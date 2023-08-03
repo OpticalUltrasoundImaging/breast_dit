@@ -654,7 +654,7 @@ class DiT_basic(nn.Module):
                  input_type='both',
                  label_type='MP',
                  output_type='probability',
-                 
+                 dataset='US',
                  ):
         super(DiT_basic, self).__init__()
         print('basic_model: %s\n'
@@ -672,8 +672,10 @@ class DiT_basic(nn.Module):
         self.input_type = input_type
         self.label_type = label_type
         self.output_type = output_type
-
+        self.dataset=dataset
         self.feature_net = nn.Sequential()
+        if self.dataset=='US': self.channelnum=3
+        elif self.dataset=='DOT': self.channelnum=7
 
         # baseline模型是普通resnet18不做任何修改
         
@@ -686,7 +688,7 @@ class DiT_basic(nn.Module):
                                heads=None,
                                mlp_dim=None,
                                pool=pool,
-                               channels=7, # for DOT it is 7 for US it is 3
+                               channels=self.channelnum, # for DOT it is 7 for US it is 3
                                dim_head=64,
                                dropout=0.4,
                                emb_dropout=0.,
@@ -810,7 +812,7 @@ class DiT_basic(nn.Module):
             # output probability of each class
             if self.output_type == 'probability':
                 out = self.softmax(out)
-                return out[:, 1]
+                return out[:, 0]
             elif self.output_type == 'score':
                 out = out
                 return out
@@ -830,7 +832,7 @@ if __name__ == '__main__':
                     input_type='both',
                     pool='mean',
                     output_type='probability',
-                    
+                    dataset='DOT',
                     )
     # net = ViT_basic(basic_model='t2t')
     
@@ -868,9 +870,9 @@ if __name__ == '__main__':
     Loss, Test_Acc_All = [],[]
     label_p,prob_p,box_prob=[],[],[]
     
-    num_epochs = 20
+    num_epochs = 10
     learning_rate = 1e-5
-    optimizer = torch.optim.Adam(net.parameters(), lr=learning_rate, weight_decay=1e-5)
+    optimizer = torch.optim.Adam(net.parameters(), lr=learning_rate, weight_decay=1e-6)
     
     best_pred = []
     best_acc = 0
@@ -941,7 +943,7 @@ if __name__ == '__main__':
         Test_Acc_All.append(np.mean(Acc_test))
         
         
-        if epoch>=10:
+        if epoch>=5:
             cnts=test_dataset.us_num
             label_p+=[np.mean(Test_label[cnts[i]:cnts[i+1]]) for i in range(len(cnts)-1)]
             prob_p+=[np.mean(Prob[cnts[i]:cnts[i+1]]) for i in range(len(cnts)-1)] 
@@ -955,7 +957,7 @@ if __name__ == '__main__':
     
     fig = plt.figure()
     # calculate the fpr and tpr for all thresholds of the classification
-    fpr, tpr, threshold = metrics.roc_curve(label_p, prob_p)
+    fpr, tpr, threshold = metrics.roc_curve(Test_label, Prob)
     roc_auc = metrics.auc(fpr, tpr)
     plt.title('Receiver Operating Characteristic')
     plt.plot(fpr, tpr, 'b', label = 'AUC = %0.4f' % roc_auc)
@@ -968,7 +970,7 @@ if __name__ == '__main__':
     plt.show()
     
     fig = plt.figure()
-    box_prob=np.reshape(prob_p,(10,7))
+    box_prob=np.reshape(prob_p,(5,10))
     bp = plt.boxplot(box_prob)
     ax = plt.gca()
-    ax.set_xticklabels(['P2','P4','P6','P7','P8','P9','P10'])
+    ax.set_xticklabels(['P2','P7','P13','P16','P25','P26','P30','P36','P38','P39'])
