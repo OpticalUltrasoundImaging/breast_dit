@@ -4,8 +4,10 @@ folder_path = uigetdir();
 dirs = dir(folder_path);
 dfolders = dirs([dirs(:).isdir]) ;
 dfolders = dfolders(~ismember({dfolders(:).name},{'.','..'}));
-rect = [573,424,398,303];
-img_type = '*.png';
+rect = [];
+img_type = '*.bmp';
+pixel_per_unit_hor = [];
+pixel_per_unit_ver = [];
 for i = 1:length(dfolders)
     current_folder = dfolders(i).folder;
     final_path = dfolders(i).name;
@@ -16,13 +18,14 @@ for i = 1:length(dfolders)
     us_dir = us_dirs([us_dirs(:).isdir]);
     us_dir = us_dir(~ismember({us_dir(:).name},{'.','..'}));
     us_name = {us_dir(:).name};
-    US_name = us_name(contains(us_name,'US'));
+    US_name = us_name(contains(us_name,["US","us"]));
 
     patien_id = 'NIRUS';
     index_patient = detail_path{contains(detail_path,patien_id)};
     folder = 'C:\Users\Minghao\Box\DOT\chemo_US';
     us_folder = [];
     cyc_folder = [];
+    
     if ~isempty(US_name) % if have us_only folder, read us_only first, then target US
         us_folder = [];
         cyc_folder = final_path;
@@ -36,15 +39,49 @@ for i = 1:length(dfolders)
             load_len = length(tar_name);
         else
             load_len = length(img_dir);
+            void_idx = ones(1,load_len);
+            for id = 1:load_len
+                if startsWith(img_dir(id).name , '.')
+                    void_idx(id) = 0;
+                end
+            end
+            void_idx = logical(void_idx);
+            img_dir = img_dir(void_idx);
+            load_len = length(img_dir);
         end
         for id = 1:load_len
-            if startsWith( img_dir(id).name , '.')
+            if startsWith(img_dir(id).name , '.')
                 continue
             end
             if ~isempty(tar_name)
                 I = imread(fullfile(img_dir(id).folder,tar_name{id}));
             else
                 I = imread(fullfile(img_dir(id).folder,img_dir(id).name));
+            end
+            if id == 1
+                if isempty(pixel_per_unit_hor)
+                    figure;imshow(I)
+                    points = ginput(2);
+                    waitfor(points)
+                    pixel_per_unit_hor = abs(points(2,1)-points(1,1));
+                    figure;imshow(I)
+                    points = ginput(2);
+                    waitfor(points)
+                    pixel_per_unit_ver = abs(points(2,2)-points(1,2));
+                else
+                    figure;imshow(I)
+                    points = ginput(2);
+                    waitfor(points)
+                    pixel_per_unit_hor_new = abs(points(2,1)-points(1,1));
+                    figure;imshow(I)
+                    points = ginput(2);
+                    waitfor(points)
+                    pixel_per_unit_ver_new = abs(points(2,2)-points(1,2));
+                    rect(3) = (rect(3)*pixel_per_unit_hor_new)/pixel_per_unit_hor;
+                    rect(4) = (rect(4)*pixel_per_unit_ver_new)/pixel_per_unit_ver;
+                    pixel_per_unit_hor = pixel_per_unit_hor_new;
+                    pixel_per_unit_ver = pixel_per_unit_ver_new;
+                end
             end
             if isempty(rect)
                 [J,rect] = imcrop(I);
@@ -117,6 +154,15 @@ for i = 1:length(dfolders)
             load_len = length(tar_name);
         else
             load_len = length(img_dir);
+            void_idx = ones(1,load_len);
+            for id = 1:load_len
+                if startsWith(img_dir(id).name , '.')
+                    void_idx(id) = 0;
+                end
+            end
+            void_idx = logical(void_idx);
+            img_dir = img_dir(void_idx);
+            load_len = length(img_dir);
         end
         
         for id = 1:load_len
@@ -127,6 +173,31 @@ for i = 1:length(dfolders)
                 I = imread(fullfile(img_dir(id).folder,tar_name{id}));
             else
                 I = imread(fullfile(img_dir(id).folder,img_dir(id).name));
+            end
+            if id == 1
+                if isempty(pixel_per_unit_hor)
+                    figure;imshow(I)
+                    points = ginput(2);
+                    waitfor(points)
+                    pixel_per_unit_hor = abs(points(2,1)-points(1,1));
+                    figure;imshow(I)
+                    points = ginput(2);
+                    waitfor(points)
+                    pixel_per_unit_ver = abs(points(2,2)-points(1,2));
+                else
+                    figure;imshow(I)
+                    points = ginput(2);
+                    waitfor(points)
+                    pixel_per_unit_hor_new = abs(points(2,1)-points(1,1));
+                    figure;imshow(I)
+                    points = ginput(2);
+                    waitfor(points)
+                    pixel_per_unit_ver_new = abs(points(2,2)-points(1,2));
+                    rect(3) = (rect(3)*pixel_per_unit_hor_new)/pixel_per_unit_hor;
+                    rect(4) = (rect(4)*pixel_per_unit_ver_new)/pixel_per_unit_ver;
+                    pixel_per_unit_hor = pixel_per_unit_hor_new;
+                    pixel_per_unit_ver = pixel_per_unit_ver_new;
+                end
             end
             if isempty(rect)
                 [J,rect] = imcrop(I);
