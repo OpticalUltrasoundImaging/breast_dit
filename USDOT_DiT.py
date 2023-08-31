@@ -755,7 +755,8 @@ if finetune==False:
     
             self._initialize_weights()
             self.softmax = nn.Softmax(dim=1)
-    
+            self.loss = nn.CrossEntropyLoss()
+            
         def _initialize_weights(self):
             print("initialize weights for network!")
             for m in self.modules():
@@ -792,9 +793,26 @@ if finetune==False:
             
             #out = self.softmax(out)
             if self.dataset=='DOT':            
-                out = -out
-            
-            return out
+                out = out
+            if labels is not None:  # training or validation process
+                # output loss and acc
+                labels = labels.view(-1)
+                #labels_onehot = torch.nn.functional.one_hot(labels,2).type('torch.FloatTensor').to(device)
+                prob = self.softmax(out)
+                # cls_loss = self.loss(out, labels_MP.float())
+                cls_loss = self.loss(out, labels)
+                #cls_loss = self.loss(out, labels_onehot)
+    
+                _, predicted = torch.max(prob.data, 1)
+                # predicted = prob.data > 0.5
+                acc = (predicted == labels).sum().item() / out.size(0)
+    
+    
+                return out,cls_loss
+            else:  # test process
+    
+                return out
+            #return out
             
     
     class DiT_basic(nn.Module):
@@ -852,12 +870,16 @@ if finetune==False:
             elif loss_f == 'focal':
                 self.loss = FocalLoss(class_num=2, alpha=weight, gamma=2)
             self.softmax = nn.Softmax(dim=1)
-            self.fc = nn.Sequential(nn.LayerNorm(4),
-                                    nn.Linear(4, 2))
-        def forward(self,before_DOT,after_DOT,before_US,after_US,labels=None):
-            out_DOT=self.DOT_net(before_DOT,after_DOT)
-            out_US=self.US_net(before_US,after_US)
-            out = torch.cat((out_DOT, out_US), dim=1)
+            self.fc = nn.Sequential(nn.LayerNorm(7),
+                                    nn.Linear(7, 2))
+        def forward(self,before_DOT,after_DOT,before_US,after_US,pathology,labels=None):
+            if labels!=None:
+                out_DOT,loss_DOT=self.DOT_net(before_DOT,after_DOT,labels)
+                out_US,loss_US=self.US_net(before_US,after_US,labels)
+            else:
+                out_DOT=self.DOT_net(before_DOT,after_DOT)
+                out_US=self.US_net(before_US,after_US)                
+            out = torch.cat((out_DOT, out_US, pathology), dim=1)
             out = self.fc(out)
             if labels is not None:  # training or validation process
                 # output loss and acc
@@ -867,13 +889,14 @@ if finetune==False:
                 # cls_loss = self.loss(out, labels_MP.float())
                 cls_loss = self.loss(out, labels)
                 #cls_loss = self.loss(out, labels_onehot)
+                loss_USDOT= cls_loss+2e-1*loss_DOT+2e-1*loss_US
     
                 _, predicted = torch.max(prob.data, 1)
                 # predicted = prob.data > 0.5
                 acc = (predicted == labels).sum().item() / out.size(0)
     
     
-                return cls_loss, acc
+                return loss_USDOT, acc
             else:  # test process
                 # output probability of each class
                 if self.output_type == 'probability':
@@ -900,7 +923,7 @@ else:
         def forward(self,before_DOT,after_DOT,before_US,after_US,labels=None):
             self.model_US.pretrain=True
             self.model_DOT.pretrain=True
-            US_out=-self.model_US(before_US,after_US)
+            US_out=self.model_US(before_US,after_US)
             DOT_out=self.model_DOT(before_DOT,after_DOT)
             out = torch.cat((US_out, DOT_out), dim=1)
             out = self.fc(out)
@@ -1012,8 +1035,8 @@ if __name__ == '__main__':
     Loss, Val_Acc_All = [],[]
     label_p,prob_p,box_prob=[],[],[]
     
-    num_epochs = 10
-    learning_rate = 1e-5
+    num_epochs = 15
+    learning_rate = 5e-6
     optimizer = torch.optim.Adam(USDOT_net.parameters(), lr=learning_rate, weight_decay=1e-8)
     scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, 'min',patience=150,threshold=0.005, threshold_mode='abs',verbose =True)
     
@@ -1024,10 +1047,11 @@ if __name__ == '__main__':
         for i, i_batch  in enumerate(train_loader):
             USDOT_net.train()
             image_batch = [i.to(device) for i in i_batch['image']]
+            pathology_batch = i_batch['pathology'].to(device)
             label_batch = i_batch['labels'].to(device)
     
             optimizer.zero_grad()
-            loss,acc = USDOT_net(image_batch[0], image_batch[1], image_batch[2], image_batch[3],labels=label_batch)
+            loss,acc = USDOT_net(image_batch[0], image_batch[1], image_batch[2], image_batch[3],pathology_batch,labels=label_batch)
             
             Loss.append(loss.item())
             loss.backward()
@@ -1061,7 +1085,8 @@ if __name__ == '__main__':
                 USDOT_net.eval()
                 val_batch = [i.to(device) for i in i_batch1['image']]
                 val_label = i_batch1['labels'].to(device)
-                prob = USDOT_net(val_batch[0], val_batch[1], val_batch[2], val_batch[3])
+                val_pathology  = i_batch1['pathology'].to(device)
+                prob = USDOT_net(val_batch[0], val_batch[1], val_batch[2], val_batch[3],val_pathology)
                 predicted = prob.data > 0.5
                 
                 val_acc = (predicted == val_label).sum().item() / predicted.size(0)
@@ -1094,7 +1119,7 @@ if __name__ == '__main__':
             prob_p+=[np.mean(Prob[(cnts[i]//div+2):(cnts[i+1]//div+2)]) for i in range(len(cnts)-1)] 
             plt.figure()
             plt.plot(Prob)
-            plt.plot(Test_label)
+            plt.plot(Val_label)
     
 
     plt.figure()
@@ -1115,7 +1140,7 @@ if __name__ == '__main__':
     plt.show()
     
     fig = plt.figure()
-    box_prob=np.reshape(prob_p,(5,9))
+    box_prob=np.reshape(prob_p,(10,10))
     bp = plt.boxplot(box_prob)
     ax = plt.gca()
-    ax.set_xticklabels(['P2','P4','P15','P16','P25','P30','P36','P38','P41'])
+    #ax.set_xticklabels(val_IDs)
