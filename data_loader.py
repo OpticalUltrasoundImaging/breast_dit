@@ -178,8 +178,7 @@ class pCRDataset(Dataset):
             # read images
             us_pre_chemo_image = plt.imread(us_pre_chemo_image_path)
             us_cyc_image = plt.imread(us_cyc_image_path)
-            if len(us_cyc_image.shape)==2 or len(us_pre_chemo_image.shape)==2:
-                print(self.IDs[p_id])   
+ 
             if self.transform_US:
                 us_pre_chemo_image_tensor=self.transform_US(us_pre_chemo_image)
                 us_cyc_image_tensor=self.transform_US(us_cyc_image)
@@ -211,8 +210,9 @@ class pCRDataset(Dataset):
                 dot_cyc_image_tensor=self.transform_DOT(dot_cyc_image)
             # label
             labels = us_line['pCR'].values[0]
+            pathology = np.array([us_line['ER'].values[0],us_line['PR'].values[0],us_line['HER2'].values[0]])
             #labels = np.eye(2)[labels]
-            sample = {'image': [dot_pre_chemo_image_tensor,dot_cyc_image_tensor,us_pre_chemo_image_tensor,us_cyc_image_tensor], 'labels': labels}
+            sample = {'image': [dot_pre_chemo_image_tensor,dot_cyc_image_tensor,us_pre_chemo_image_tensor,us_cyc_image_tensor], 'pathology':pathology,'labels': labels}
             
             
     
