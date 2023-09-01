@@ -793,7 +793,7 @@ if finetune==False:
             
             #out = self.softmax(out)
             if self.dataset=='DOT':            
-                out = out
+                out = -out
             if labels is not None:  # training or validation process
                 # output loss and acc
                 labels = labels.view(-1)
@@ -870,8 +870,8 @@ if finetune==False:
             elif loss_f == 'focal':
                 self.loss = FocalLoss(class_num=2, alpha=weight, gamma=2)
             self.softmax = nn.Softmax(dim=1)
-            self.fc = nn.Sequential(nn.LayerNorm(7),
-                                    nn.Linear(7, 2))
+            self.fc = nn.Sequential(nn.LayerNorm(4),
+                                    nn.Linear(4, 2))
         def forward(self,before_DOT,after_DOT,before_US,after_US,pathology,labels=None):
             if labels!=None:
                 out_DOT,loss_DOT=self.DOT_net(before_DOT,after_DOT,labels)
@@ -879,7 +879,7 @@ if finetune==False:
             else:
                 out_DOT=self.DOT_net(before_DOT,after_DOT)
                 out_US=self.US_net(before_US,after_US)                
-            out = torch.cat((out_DOT, out_US, pathology), dim=1)
+            out = torch.cat((out_DOT, out_US), dim=1)
             out = self.fc(out)
             if labels is not None:  # training or validation process
                 # output loss and acc
@@ -889,7 +889,7 @@ if finetune==False:
                 # cls_loss = self.loss(out, labels_MP.float())
                 cls_loss = self.loss(out, labels)
                 #cls_loss = self.loss(out, labels_onehot)
-                loss_USDOT= cls_loss+2e-1*loss_DOT+2e-1*loss_US
+                loss_USDOT= cls_loss
     
                 _, predicted = torch.max(prob.data, 1)
                 # predicted = prob.data > 0.5
@@ -1144,3 +1144,6 @@ if __name__ == '__main__':
     bp = plt.boxplot(box_prob)
     ax = plt.gca()
     #ax.set_xticklabels(val_IDs)
+    print('Val_ID:' ,  val_IDs)
+
+
