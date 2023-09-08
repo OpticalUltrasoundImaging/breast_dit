@@ -21,7 +21,7 @@ from torch.utils.data import DataLoader
 import copy
 import sklearn.metrics as metrics
 import matplotlib.pyplot as plt
-
+import os
 # helpers
 
 finetune = False
@@ -870,8 +870,11 @@ if finetune==False:
             elif loss_f == 'focal':
                 self.loss = FocalLoss(class_num=2, alpha=weight, gamma=2)
             self.softmax = nn.Softmax(dim=1)
-            self.fc = nn.Sequential(nn.LayerNorm(4),
-                                    nn.Linear(4, 2))
+            self.fc = nn.Sequential(nn.LayerNorm(24),
+                                    nn.Linear(24, 16),
+                                    nn.LayerNorm(16),
+                                    nn.Linear(16, 2),
+                                    )
         def forward(self,before_DOT,after_DOT,before_US,after_US,pathology,labels=None):
             if labels!=None:
                 out_DOT,loss_DOT=self.DOT_net(before_DOT,after_DOT,labels)
@@ -879,7 +882,7 @@ if finetune==False:
             else:
                 out_DOT=self.DOT_net(before_DOT,after_DOT)
                 out_US=self.US_net(before_US,after_US)                
-            out = torch.cat((out_DOT, out_US), dim=1)
+            out = torch.cat((out_DOT, out_US, pathology), dim=1)
             out = self.fc(out)
             if labels is not None:  # training or validation process
                 # output loss and acc
@@ -948,202 +951,249 @@ else:
                 return out[:, 0]
         
 if __name__ == '__main__':
-    if finetune==False:
-        device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')    
-        ## old version
-        USDOT_net = DiT_basic(basic_model='t2t',  # 使用vit还是t2t vit只支持both 因为其他的不需要消融探究
-                        patch_emb='isolated',
-                        time_emb=True,
-                        pos_emb='share',
-                        use_scale=True,
-                        loss_f='ce',  # focal of ce
-                        input_type='both',
-                        pool='mean',
-                        output_type='probability',
-                        
-                        )
-        # net = ViT_basic(basic_model='t2t')
-    else:
-        ## combined model
-        
-        device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')    
-        model_PATH_US, model_PATH_DOT= 'model/US.pth', 'model/DOT.pth'
-        US_model = torch.load(model_PATH_US).to(device)
-        DOT_model = torch.load(model_PATH_DOT).to(device)
-        for param in US_model.parameters():
-            param.requires_grad = True
-        for param in DOT_model.parameters():
-            param.requires_grad = True
-        USDOT_net = model_USDOT(US_model, DOT_model)
     
-    USDOT_net.to(device)
-    img_size=128
     
     
     P_ID=[]
+    
+    Features = ['ILC','NG','MC', 'Thb', 'Oxy', 'Deoxy', 'TN', 'HER2', 'ER', '%Thb1', \
+                '%THb2', '%Thb3', 'PM', '%US1', '%US2', '%US3', 'US0', 'US1', 'US2','US3']
+    #Features = ['TN', 'HER2', 'ER', '%Thb3', '%US1']
     with open('Patient_names.txt', 'r') as file:
         for line in file:
             P_ID.append(line[:-1])
     random.shuffle(P_ID)
-    val_IDs,train_IDs=P_ID[:len(P_ID)//5],P_ID[len(P_ID)//5:]
-    print('Val_ID:' ,  val_IDs)
-    #print('Train_ID:' ,  train_IDs)
-    train_dataset = pCRDataset(datatype='USDOT',
-                                info_file='./1Patient_US_train.ods',
-                                           root_dir='./Dataset/',
-                                           IDs=train_IDs,
-                                           cyc_num='1',
-                                           transform_US=transforms.Compose([
-                                               transforms.ToTensor(),
-                                               ToDoubleTensor(),
-                                               transforms.RandomHorizontalFlip(p=0.5),
-                                               transforms.RandomRotation(degrees=(-45,45)),
-                                               transforms.Resize([img_size,img_size]),]),
-                                           transform_DOT=transforms.Compose([
-                                               transforms.ToTensor(),
-                                               ToDoubleTensor(),
-                                               transforms.RandomHorizontalFlip(p=0.5),
-                                               transforms.RandomRotation(degrees=(-45,45)),
-                                               transforms.Resize([33,33]),]),
-                                           )
-    train_loader = DataLoader(train_dataset, batch_size=24,
-                        shuffle=True, num_workers=0)
     
-    val_dataset = pCRDataset(datatype='USDOT',
-                                info_file='./1Patient_US_train.ods',
-                                           root_dir='./Dataset/',
-                                           IDs=val_IDs,
-                                           cyc_num='1',
-                                           transform_US=transforms.Compose([
-                                               transforms.ToTensor(),
-                                               ToDoubleTensor(),
-                                               transforms.RandomHorizontalFlip(p=0.5),
-                                               transforms.RandomRotation(degrees=(-45,45)),
-                                               transforms.Resize([img_size,img_size]),]),
-                                           transform_DOT=transforms.Compose([
-                                               transforms.ToTensor(),
-                                               ToDoubleTensor(),
-                                               transforms.RandomHorizontalFlip(p=0.5),
-                                               transforms.RandomRotation(degrees=(-45,45)),
-                                               transforms.Resize([33,33]),]),
-                                           )
-    val_loader = DataLoader(val_dataset, batch_size=24,
-                        shuffle=False, num_workers=0)
-    # test_loader1 = DataLoader(test_dataset, batch_size=96,
-    #                     shuffle=True, num_workers=0)
-    
-    Loss, Val_Acc_All = [],[]
-    label_p,prob_p,box_prob=[],[],[]
-    
-    num_epochs = 15
-    learning_rate = 5e-6
-    optimizer = torch.optim.Adam(USDOT_net.parameters(), lr=learning_rate, weight_decay=1e-8)
-    scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, 'min',patience=150,threshold=0.005, threshold_mode='abs',verbose =True)
-    
-    best_pred = []
-    best_acc = 0
-    
-    for epoch in range(num_epochs):
-        for i, i_batch  in enumerate(train_loader):
-            USDOT_net.train()
-            image_batch = [i.to(device) for i in i_batch['image']]
-            pathology_batch = i_batch['pathology'].to(device)
-            label_batch = i_batch['labels'].to(device)
-    
-            optimizer.zero_grad()
-            loss,acc = USDOT_net(image_batch[0], image_batch[1], image_batch[2], image_batch[3],pathology_batch,labels=label_batch)
+    ## kfold
+    for i in range(5):
+        if finetune==False:
+            device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')    
+            ## old version
+            USDOT_net = DiT_basic(basic_model='t2t',  # 使用vit还是t2t vit只支持both 因为其他的不需要消融探究
+                            patch_emb='isolated',
+                            time_emb=True,
+                            pos_emb='share',
+                            use_scale=True,
+                            loss_f='ce',  # focal of ce
+                            input_type='both',
+                            pool='mean',
+                            output_type='probability',
+                            
+                            )
+            # net = ViT_basic(basic_model='t2t')
+        else:
+            ## combined model
             
-            Loss.append(loss.item())
-            loss.backward()
-            optimizer.step()  
-            
-            
-            '''
-            # test loss
-            with torch.no_grad():
-                net.eval()
-                # test data
-                test_batch = next(iter(test_loader1))
-                test_image = [i.to(device) for i in test_batch['image']]
-                test_label = test_batch['labels'].to(device)
-                test_loss,test_acc = net(test_image[0], test_image[1],labels=test_label)            
+            device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')    
+            model_PATH_US, model_PATH_DOT= 'model/US.pth', 'model/DOT.pth'
+            US_model = torch.load(model_PATH_US).to(device)
+            DOT_model = torch.load(model_PATH_DOT).to(device)
+            for param in US_model.parameters():
+                param.requires_grad = True
+            for param in DOT_model.parameters():
+                param.requires_grad = True
+            USDOT_net = model_USDOT(US_model, DOT_model)
+        
+        USDOT_net.to(device)
+        img_size=128
+        P_ID=P_ID[len(P_ID)//4:]+P_ID[:len(P_ID)//4]
+        val_IDs,train_IDs=P_ID[:len(P_ID)//4],P_ID[len(P_ID)//4:]
+        print('Kfold', i+1, '\nVal_ID:' ,  val_IDs)
+        #print('Train_ID:' ,  train_IDs)
+        train_dataset = pCRDataset(datatype='USDOT',
+                                    info_file='./1Patient_US_train.ods',
+                                               root_dir='./Dataset/',
+                                               IDs=train_IDs,
+                                               features = Features,
+                                               cyc_num_us='1',
+                                               cyc_num_dot='1',
+                                               transform_US=transforms.Compose([
+                                                   transforms.ToTensor(),
+                                                   ToDoubleTensor(),
+                                                   transforms.RandomHorizontalFlip(p=0.5),
+                                                   transforms.RandomRotation(degrees=(-45,45)),
+                                                   transforms.Resize([img_size,img_size]),]),
+                                               transform_DOT=transforms.Compose([
+                                                   transforms.ToTensor(),
+                                                   ToDoubleTensor(),
+                                                   transforms.RandomHorizontalFlip(p=0.5),
+                                                   transforms.RandomRotation(degrees=(-45,45)),
+                                                   transforms.Resize([33,33]),]),
+                                               )
+        train_loader = DataLoader(train_dataset, batch_size=24,
+                            shuffle=True, num_workers=0)
+        
+        val_dataset = pCRDataset(datatype='USDOT',
+                                    info_file='./1Patient_US_train.ods',
+                                               root_dir='./Dataset/',
+                                               IDs=val_IDs,
+                                               features = Features,
+                                               cyc_num_us='1',
+                                               cyc_num_dot='1',
+                                               transform_US=transforms.Compose([
+                                                   transforms.ToTensor(),
+                                                   ToDoubleTensor(),
+                                                   transforms.Resize([img_size,img_size]),]),
+                                               transform_DOT=transforms.Compose([
+                                                   transforms.ToTensor(),
+                                                   ToDoubleTensor(),
+                                                   transforms.Resize([33,33]),]),
+                                               )
+        val_loader = DataLoader(val_dataset, batch_size=24,
+                            shuffle=False, num_workers=0)
+        # test_loader1 = DataLoader(test_dataset, batch_size=96,
+        #                     shuffle=True, num_workers=0)
+        
+        Loss, Val_Acc_All = [],[]
+        label_p,prob_p,box_prob=[],[],[]
+        
+        num_epochs = 15
+        learning_rate = 1e-5
+        optimizer = torch.optim.Adam(USDOT_net.parameters(), lr=learning_rate, weight_decay=1e-8)
+        scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, 'min',patience=150,threshold=0.01, threshold_mode='abs',verbose =True)
+        
+        best_pred,best_pred1 = [],[]
+        
+        best_acc,best_acc1 = 0,1
+        best_epoch = 0
+        
+        for epoch in range(num_epochs):
+            for i, i_batch  in enumerate(train_loader):
+                USDOT_net.train()
+                image_batch = [i.to(device) for i in i_batch['image']]
+                pathology_batch = i_batch['pathology'].to(device)
+                label_batch = i_batch['labels'].to(device)
+        
+                optimizer.zero_grad()
+                loss,acc = USDOT_net(image_batch[0], image_batch[1], image_batch[2], image_batch[3],pathology_batch,labels=label_batch)
                 
+                Loss.append(loss.item())
+                loss.backward()
+                optimizer.step()  
+                
+                
+                '''
+                # test loss
+                with torch.no_grad():
+                    net.eval()
+                    # test data
+                    test_batch = next(iter(test_loader1))
+                    test_image = [i.to(device) for i in test_batch['image']]
+                    test_label = test_batch['labels'].to(device)
+                    test_loss,test_acc = net(test_image[0], test_image[1],labels=test_label)            
+                    
+                    if (i+1)%20==0:
+                        print('Epoch: {}. Batch: {}. Loss: {}. Accuracy: {}. Test_loss: {}. Test_acc: {}.'
+                              .format(epoch, i+1, loss.item(), acc, test_loss.item(), test_acc))
+                '''
+                    
                 if (i+1)%20==0:
-                    print('Epoch: {}. Batch: {}. Loss: {}. Accuracy: {}. Test_loss: {}. Test_acc: {}.'
-                          .format(epoch, i+1, loss.item(), acc, test_loss.item(), test_acc))
-            '''
+                    
+                    print('Epoch: {}. Batch: {}. Loss: {}. Accuracy: {}.'
+                          .format(epoch, i+1, loss.item(), acc))
+                    scheduler.step(loss)
                 
-            if (i+1)%20==0:
+            Prob, Predict, Val_label, Acc_val = [],[],[],[]
+            with torch.no_grad():
+                for i1, i_batch1 in enumerate(val_loader):
+                    USDOT_net.eval()
+                    val_batch = [i.to(device) for i in i_batch1['image']]
+                    val_label = i_batch1['labels'].to(device)
+                    val_pathology  = i_batch1['pathology'].to(device)
+                    prob = USDOT_net(val_batch[0], val_batch[1], val_batch[2], val_batch[3],val_pathology)
+                    predicted = prob.data > 0.5
+                    
+                    val_acc = (predicted == val_label).sum().item() / predicted.size(0)
+                    
+                    prob=prob.tolist()
+                    predicted=predicted.tolist()
+                    val_label=val_label.tolist()
+                    
+                    Prob.extend(prob)
+                    Predict.extend(predicted)
+                    Val_label.extend(val_label)
+                    Acc_val.append(val_acc)
                 
-                print('Epoch: {}. Batch: {}. Loss: {}. Accuracy: {}.'
-                      .format(epoch, i+1, loss.item(), acc))
-                scheduler.step(loss)
+                
+            print('Epoch: {}.  Test_acc: {}.'.format(epoch, np.mean(Acc_val)))
             
-        Prob, Predict, Val_label, Acc_val = [],[],[],[]
-        with torch.no_grad():
-            for i1, i_batch1 in enumerate(val_loader):
-                USDOT_net.eval()
-                val_batch = [i.to(device) for i in i_batch1['image']]
-                val_label = i_batch1['labels'].to(device)
-                val_pathology  = i_batch1['pathology'].to(device)
-                prob = USDOT_net(val_batch[0], val_batch[1], val_batch[2], val_batch[3],val_pathology)
-                predicted = prob.data > 0.5
-                
-                val_acc = (predicted == val_label).sum().item() / predicted.size(0)
-                
-                prob=prob.tolist()
-                predicted=predicted.tolist()
-                val_label=val_label.tolist()
-                
-                Prob.extend(prob)
-                Predict.extend(predicted)
-                Val_label.extend(val_label)
-                Acc_val.append(val_acc)
-            
-            
-        print('Epoch: {}.  Test_acc: {}.'.format(epoch, np.mean(Acc_val)))
-        if (epoch+1)%10 == 0:
-            print('model saved')
-            #torch.save(model_coreg, model_PATH)
-        if np.mean(Acc_val)>best_acc:
-            best_acc=np.mean(Acc_val)
-            best_pred=Prob
-        
-        # test acc for epoch
-        Val_Acc_All.append(np.mean(Acc_val))
-        
-        div=100
-        if epoch>=5:
+            div=100
             cnts=val_dataset.usdot_num
-            label_p+=[np.round(np.mean(Val_label[(cnts[i]//div+2):(cnts[i+1]//div+2)])) for i in range(len(cnts)-1)]
-            prob_p+=[np.mean(Prob[(cnts[i]//div+2):(cnts[i+1]//div+2)]) for i in range(len(cnts)-1)] 
-            plt.figure()
-            plt.plot(Prob)
-            plt.plot(Val_label)
+            label_by_p=[np.round(np.mean(Val_label[(cnts[i]//div+2):(cnts[i+1]//div+2)])) for i in range(len(cnts)-1)]
+            prob_by_p=[np.mean(Prob[(cnts[i]//div+2):(cnts[i+1]//div+2)]) for i in range(len(cnts)-1)] 
+            fpr, tpr, threshold = metrics.roc_curve(label_by_p, 1-np.array(prob_by_p))
+            roc_auc = metrics.auc(fpr, tpr)
+            print('Epoch: {}.  Test_auc: {}.'.format(epoch, roc_auc))
+            if epoch>=5:
+                label_p+=label_by_p
+                prob_p+=prob_by_p
+            if epoch-best_epoch>9:
+                plt.figure()
+                plt.plot(Prob)
+                plt.plot(Val_label)
+                print('early stop')
+                break
+            if np.mean(Acc_val)>best_acc:
+                best_acc=np.mean(Acc_val)
+                best_pred=Prob
+                best_epoch=epoch
+                print('model saved')
+                save_path = '/media/whitaker-160/bigstorage/DiT/breast_dit/model/'
+                save_mode_path = os.path.join(save_path, 'USDOT.pth')
+                torch.save(USDOT_net, save_mode_path)
+                
+            if np.mean(Acc_val)<best_acc1:
+                best_acc1=np.mean(Acc_val)
+                best_pred1=Prob
+            
+            # test acc for epoch
+            Val_Acc_All.append(np.mean(Acc_val))
+            
+            
+            if epoch==14:
+                plt.figure()
+                plt.plot(Prob)
+                plt.plot(Val_label)
+        
     
-
-    plt.figure()
-    plt.plot(Val_Acc_All)
-    
-    fig = plt.figure()
-    # calculate the fpr and tpr for all thresholds of the classification
-    fpr, tpr, threshold = metrics.roc_curve(Val_label, best_pred)
-    roc_auc = metrics.auc(fpr, tpr)
-    plt.title('Receiver Operating Characteristic')
-    plt.plot(fpr, tpr, 'b', label = 'AUC = %0.4f' % roc_auc)
-    plt.legend(loc = 'lower right')
-    plt.plot([0, 1], [0, 1],'r--')
-    plt.xlim([0, 1])
-    plt.ylim([0, 1])
-    plt.ylabel('True Positive Rate')
-    plt.xlabel('False Positive Rate')
-    plt.show()
-    
-    fig = plt.figure()
-    box_prob=np.reshape(prob_p,(10,10))
-    bp = plt.boxplot(box_prob)
-    ax = plt.gca()
-    #ax.set_xticklabels(val_IDs)
-    print('Val_ID:' ,  val_IDs)
+        plt.figure()
+        plt.plot(Val_Acc_All)
+        
+        #ROC
+        fig = plt.figure()
+        # calculate the fpr and tpr for all thresholds of the classification
+        fpr, tpr, threshold = metrics.roc_curve(Val_label, 1-np.array(best_pred))
+        roc_auc = metrics.auc(fpr, tpr)
+        plt.title('Receiver Operating Characteristic')
+        plt.plot(fpr, tpr, 'b', label = 'AUC = %0.4f' % roc_auc)
+        plt.legend(loc = 'lower right')
+        plt.plot([0, 1], [0, 1],'r--')
+        plt.xlim([0, 1])
+        plt.ylim([0, 1])
+        plt.ylabel('True Positive Rate')
+        plt.xlabel('False Positive Rate')
+        plt.show()
+        
+        #ROC1
+        fig = plt.figure()
+        # calculate the fpr and tpr for all thresholds of the classification
+        fpr, tpr, threshold = metrics.roc_curve(Val_label, 1-np.array(best_pred1))
+        roc_auc = metrics.auc(fpr, tpr)
+        plt.title('Receiver Operating Characteristic')
+        plt.plot(fpr, tpr, 'b', label = 'AUC = %0.4f' % roc_auc)
+        plt.legend(loc = 'lower right')
+        plt.plot([0, 1], [0, 1],'r--')
+        plt.xlim([0, 1])
+        plt.ylim([0, 1])
+        plt.ylabel('True Positive Rate')
+        plt.xlabel('False Positive Rate')
+        plt.show()
+        
+        fig = plt.figure()
+        box_prob=np.reshape(prob_p,(epoch-4,len(val_IDs)))
+        bp = plt.boxplot(box_prob)
+        ax = plt.gca()
+        #ax.set_xticklabels(val_IDs)
+        print('Kfold', i+1, '\nVal_ID:' ,  val_IDs)
 
 
