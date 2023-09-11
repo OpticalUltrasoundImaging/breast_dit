@@ -689,24 +689,24 @@ if finetune==False:
                 if input_type == 'both':
                     self.net = DiT(image_size=self.img_s,
                                    num_classes=2,
-                                   dim=256, #256
+                                   dim=20, #256
                                    depth=None,
                                    heads=None,
                                    mlp_dim=None,
                                    pool=pool,
                                    channels=self.channel_num, # for DOT it is 7 for US it is 3
-                                   dim_head=64, #64
+                                   dim_head=2, #64
                                    dropout=0.3,
                                    emb_dropout=0.,
                                    patch_emb=patch_emb,
                                    pos_emb=pos_emb,
                                    time_emb=time_emb,
                                    use_scale=use_scale,
-                                   transformer=Transformer(dim=256, #256
-                                                           depth=16, #16
-                                                           heads=16, #16
-                                                           dim_head=64, #64
-                                                           mlp_dim=512), #512
+                                   transformer=Transformer(dim=20, #256
+                                                           depth=2, #16
+                                                           heads=2, #16
+                                                           dim_head=2, #64
+                                                           mlp_dim=4), #512
                                    t2t_layers=((7, 4), (3, 2), (3, 2)),
                                    
                                    )
@@ -745,8 +745,8 @@ if finetune==False:
                                                           mlp_dim=512))
     
             if self.input_type == 'both':
-                self.fc = nn.Sequential(nn.LayerNorm(256),
-                                        nn.Linear(256, 2))
+                self.fc = nn.Sequential(nn.LayerNorm(20),
+                                        nn.Linear(20, 10))
             else:
                 self.fc = nn.Sequential(nn.LayerNorm(256),
                                         nn.Linear(256, 2))
@@ -870,8 +870,8 @@ if finetune==False:
             elif loss_f == 'focal':
                 self.loss = FocalLoss(class_num=2, alpha=weight, gamma=2)
             self.softmax = nn.Softmax(dim=1)
-            self.fc = nn.Sequential(nn.LayerNorm(24),
-                                    nn.Linear(24, 16),
+            self.fc = nn.Sequential(nn.LayerNorm(36),
+                                    nn.Linear(36, 16),
                                     nn.LayerNorm(16),
                                     nn.Linear(16, 2),
                                     )
@@ -883,6 +883,7 @@ if finetune==False:
                 out_DOT=self.DOT_net(before_DOT,after_DOT)
                 out_US=self.US_net(before_US,after_US)                
             out = torch.cat((out_DOT, out_US, pathology), dim=1)
+            #out=pathology
             out = self.fc(out)
             if labels is not None:  # training or validation process
                 # output loss and acc
@@ -904,7 +905,7 @@ if finetune==False:
                 # output probability of each class
                 if self.output_type == 'probability':
                     out = self.softmax(out)
-                    return out[:, 0]
+                    return out
                 elif self.output_type == 'score':
                     out = self.softmax(out)
                     return out
@@ -948,7 +949,7 @@ else:
             else:  # test process
                 # output probability of each class
                 out = self.softmax(out)
-                return out[:, 0]
+                return out[:, 1]
         
 if __name__ == '__main__':
     
@@ -957,7 +958,7 @@ if __name__ == '__main__':
     P_ID=[]
     
     Features = ['ILC','NG','MC', 'Thb', 'Oxy', 'Deoxy', 'TN', 'HER2', 'ER', '%Thb1', \
-                '%THb2', '%Thb3', 'PM', '%US1', '%US2', '%US3', 'US0', 'US1', 'US2','US3']
+               '%THb2', '%Thb3', 'PM', '%US1', '%US2', '%US3']
     #Features = ['TN', 'HER2', 'ER', '%Thb3', '%US1']
     with open('Patient_names.txt', 'r') as file:
         for line in file:
@@ -1053,8 +1054,9 @@ if __name__ == '__main__':
         scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, 'min',patience=150,threshold=0.01, threshold_mode='abs',verbose =True)
         
         best_pred,best_pred1 = [],[]
+        best_pred_byp = []
         
-        best_acc,best_acc1 = 0,1
+        best_acc = 0
         best_epoch = 0
         
         for epoch in range(num_epochs):
@@ -1091,7 +1093,7 @@ if __name__ == '__main__':
                     
                     print('Epoch: {}. Batch: {}. Loss: {}. Accuracy: {}.'
                           .format(epoch, i+1, loss.item(), acc))
-                    scheduler.step(loss)
+                    #scheduler.step(loss)
                 
             Prob, Predict, Val_label, Acc_val = [],[],[],[]
             with torch.no_grad():
@@ -1101,7 +1103,7 @@ if __name__ == '__main__':
                     val_label = i_batch1['labels'].to(device)
                     val_pathology  = i_batch1['pathology'].to(device)
                     prob = USDOT_net(val_batch[0], val_batch[1], val_batch[2], val_batch[3],val_pathology)
-                    predicted = prob.data > 0.5
+                    _, predicted = torch.max(prob.data, 1)
                     
                     val_acc = (predicted == val_label).sum().item() / predicted.size(0)
                     
@@ -1120,8 +1122,8 @@ if __name__ == '__main__':
             div=100
             cnts=val_dataset.usdot_num
             label_by_p=[np.round(np.mean(Val_label[(cnts[i]//div+2):(cnts[i+1]//div+2)])) for i in range(len(cnts)-1)]
-            prob_by_p=[np.mean(Prob[(cnts[i]//div+2):(cnts[i+1]//div+2)]) for i in range(len(cnts)-1)] 
-            fpr, tpr, threshold = metrics.roc_curve(label_by_p, 1-np.array(prob_by_p))
+            prob_by_p=[np.mean(Predict[(cnts[i]//div+2):(cnts[i+1]//div+2)]) for i in range(len(cnts)-1)] 
+            fpr, tpr, threshold = metrics.roc_curve(Val_label, np.array(Predict))
             roc_auc = metrics.auc(fpr, tpr)
             print('Epoch: {}.  Test_auc: {}.'.format(epoch, roc_auc))
             if epoch>=5:
@@ -1129,22 +1131,20 @@ if __name__ == '__main__':
                 prob_p+=prob_by_p
             if epoch-best_epoch>9:
                 plt.figure()
-                plt.plot(Prob)
+                plt.plot(Predict)
                 plt.plot(Val_label)
                 print('early stop')
                 break
             if np.mean(Acc_val)>best_acc:
                 best_acc=np.mean(Acc_val)
-                best_pred=Prob
+                best_pred=Predict
                 best_epoch=epoch
+                best_pred_byp = prob_by_p
                 print('model saved')
                 save_path = '/media/whitaker-160/bigstorage/DiT/breast_dit/model/'
                 save_mode_path = os.path.join(save_path, 'USDOT.pth')
                 torch.save(USDOT_net, save_mode_path)
                 
-            if np.mean(Acc_val)<best_acc1:
-                best_acc1=np.mean(Acc_val)
-                best_pred1=Prob
             
             # test acc for epoch
             Val_Acc_All.append(np.mean(Acc_val))
@@ -1152,8 +1152,9 @@ if __name__ == '__main__':
             
             if epoch==14:
                 plt.figure()
-                plt.plot(Prob)
+                plt.plot(Predict)
                 plt.plot(Val_label)
+                
         
     
         plt.figure()
@@ -1162,7 +1163,7 @@ if __name__ == '__main__':
         #ROC
         fig = plt.figure()
         # calculate the fpr and tpr for all thresholds of the classification
-        fpr, tpr, threshold = metrics.roc_curve(Val_label, 1-np.array(best_pred))
+        fpr, tpr, threshold = metrics.roc_curve(Val_label, np.array(best_pred))
         roc_auc = metrics.auc(fpr, tpr)
         plt.title('Receiver Operating Characteristic')
         plt.plot(fpr, tpr, 'b', label = 'AUC = %0.4f' % roc_auc)
@@ -1177,7 +1178,7 @@ if __name__ == '__main__':
         #ROC1
         fig = plt.figure()
         # calculate the fpr and tpr for all thresholds of the classification
-        fpr, tpr, threshold = metrics.roc_curve(Val_label, 1-np.array(best_pred1))
+        fpr, tpr, threshold = metrics.roc_curve(label_by_p, np.array(best_pred_byp))
         roc_auc = metrics.auc(fpr, tpr)
         plt.title('Receiver Operating Characteristic')
         plt.plot(fpr, tpr, 'b', label = 'AUC = %0.4f' % roc_auc)
@@ -1195,5 +1196,7 @@ if __name__ == '__main__':
         ax = plt.gca()
         #ax.set_xticklabels(val_IDs)
         print('Kfold', i+1, '\nVal_ID:' ,  val_IDs)
+        plt.figure()
+        plt.plot(label_by_p)
 
 
