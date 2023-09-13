@@ -870,8 +870,8 @@ if finetune==False:
             elif loss_f == 'focal':
                 self.loss = FocalLoss(class_num=2, alpha=weight, gamma=2)
             self.softmax = nn.Softmax(dim=1)
-            self.fc = nn.Sequential(nn.LayerNorm(36),
-                                    nn.Linear(36, 16),
+            self.fc = nn.Sequential(nn.LayerNorm(35),
+                                    nn.Linear(35, 16),
                                     nn.LayerNorm(16),
                                     nn.Linear(16, 2),
                                     )
@@ -958,7 +958,7 @@ if __name__ == '__main__':
     P_ID=[]
     
     Features = ['ILC','NG','MC', 'Thb', 'Oxy', 'Deoxy', 'TN', 'HER2', 'ER', '%Thb1', \
-               '%THb2', '%Thb3', 'PM', '%US1', '%US2', '%US3']
+               '%THb2', '%Thb3', '%US1', '%US2', '%US3']
     #Features = ['TN', 'HER2', 'ER', '%Thb3', '%US1']
     with open('Patient_names.txt', 'r') as file:
         for line in file:
@@ -1093,7 +1093,7 @@ if __name__ == '__main__':
                     
                     print('Epoch: {}. Batch: {}. Loss: {}. Accuracy: {}.'
                           .format(epoch, i+1, loss.item(), acc))
-                    #scheduler.step(loss)
+                    scheduler.step(loss)
                 
             Prob, Predict, Val_label, Acc_val = [],[],[],[]
             with torch.no_grad():
