@@ -1021,7 +1021,7 @@ if __name__ == '__main__':
                                                    transforms.RandomRotation(degrees=(-45,45)),
                                                    transforms.Resize([33,33]),]),
                                                )
-        train_loader = DataLoader(train_dataset, batch_size=24,
+        train_loader = DataLoader(train_dataset, batch_size=128,
                             shuffle=True, num_workers=0)
         
         val_dataset = pCRDataset(datatype='USDOT',
@@ -1040,7 +1040,7 @@ if __name__ == '__main__':
                                                    ToDoubleTensor(),
                                                    transforms.Resize([33,33]),]),
                                                )
-        val_loader = DataLoader(val_dataset, batch_size=24,
+        val_loader = DataLoader(val_dataset, batch_size=128,
                             shuffle=False, num_workers=0)
         # test_loader1 = DataLoader(test_dataset, batch_size=96,
         #                     shuffle=True, num_workers=0)
@@ -1141,7 +1141,7 @@ if __name__ == '__main__':
                 best_epoch=epoch
                 best_pred_byp = prob_by_p
                 print('model saved')
-                save_path = '/media/whitaker-160/bigstorage/DiT/breast_dit/model/'
+                save_path = 'F:/breast_dit/model'
                 save_mode_path = os.path.join(save_path, 'USDOT.pth')
                 torch.save(USDOT_net, save_mode_path)
                 
