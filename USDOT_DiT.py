@@ -746,7 +746,7 @@ if finetune==False:
     
             if self.input_type == 'both':
                 self.fc = nn.Sequential(nn.LayerNorm(20),
-                                        nn.Linear(20, 10))
+                                        nn.Linear(20, 15))
             else:
                 self.fc = nn.Sequential(nn.LayerNorm(256),
                                         nn.Linear(256, 2))
@@ -870,8 +870,8 @@ if finetune==False:
             elif loss_f == 'focal':
                 self.loss = FocalLoss(class_num=2, alpha=weight, gamma=2)
             self.softmax = nn.Softmax(dim=1)
-            self.fc = nn.Sequential(nn.LayerNorm(35),
-                                    nn.Linear(35, 16),
+            self.fc = nn.Sequential(nn.LayerNorm(45),
+                                    nn.Linear(45, 16),
                                     nn.LayerNorm(16),
                                     nn.Linear(16, 2),
                                     )
@@ -1021,7 +1021,7 @@ if __name__ == '__main__':
                                                    transforms.RandomRotation(degrees=(-45,45)),
                                                    transforms.Resize([33,33]),]),
                                                )
-        train_loader = DataLoader(train_dataset, batch_size=128,
+        train_loader = DataLoader(train_dataset, batch_size=24,
                             shuffle=True, num_workers=0)
         
         val_dataset = pCRDataset(datatype='USDOT',
@@ -1040,7 +1040,7 @@ if __name__ == '__main__':
                                                    ToDoubleTensor(),
                                                    transforms.Resize([33,33]),]),
                                                )
-        val_loader = DataLoader(val_dataset, batch_size=128,
+        val_loader = DataLoader(val_dataset, batch_size=24,
                             shuffle=False, num_workers=0)
         # test_loader1 = DataLoader(test_dataset, batch_size=96,
         #                     shuffle=True, num_workers=0)
@@ -1141,7 +1141,7 @@ if __name__ == '__main__':
                 best_epoch=epoch
                 best_pred_byp = prob_by_p
                 print('model saved')
-                save_path = 'F:/breast_dit/model'
+                save_path = '/media/whitaker-160/bigstorage/DiT/breast_dit/model/'
                 save_mode_path = os.path.join(save_path, 'USDOT.pth')
                 torch.save(USDOT_net, save_mode_path)
                 
