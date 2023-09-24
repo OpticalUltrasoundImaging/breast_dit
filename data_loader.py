@@ -148,6 +148,7 @@ class pCRDataset(Dataset):
 
             return sample
         elif self.datatype=='USDOT': 
+            self.idx=idx
             if torch.is_tensor(idx):
                 idx = idx.tolist()
             # find image index

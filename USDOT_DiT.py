@@ -703,10 +703,10 @@ if finetune==False:
                                    time_emb=time_emb,
                                    use_scale=use_scale,
                                    transformer=Transformer(dim=20, #256
-                                                           depth=2, #16
-                                                           heads=2, #16
-                                                           dim_head=2, #64
-                                                           mlp_dim=4), #512
+                                                           depth=4, #16
+                                                           heads=4, #16
+                                                           dim_head=4, #64
+                                                           mlp_dim=64), #512
                                    t2t_layers=((7, 4), (3, 2), (3, 2)),
                                    
                                    )
@@ -870,8 +870,8 @@ if finetune==False:
             elif loss_f == 'focal':
                 self.loss = FocalLoss(class_num=2, alpha=weight, gamma=2)
             self.softmax = nn.Softmax(dim=1)
-            self.fc = nn.Sequential(nn.LayerNorm(45),
-                                    nn.Linear(45, 16),
+            self.fc = nn.Sequential(nn.LayerNorm(41),
+                                    nn.Linear(41, 16),
                                     nn.LayerNorm(16),
                                     nn.Linear(16, 2),
                                     )
@@ -957,9 +957,10 @@ if __name__ == '__main__':
     
     P_ID=[]
     
+    #Features = ['ILC','NG','MC', 'Thb', 'Oxy', 'Deoxy', 'TN', 'HER2', 'ER', '%Thb1', \
+    #           '%THb2', '%Thb3', '%US1', '%US2', '%US3']
     Features = ['ILC','NG','MC', 'Thb', 'Oxy', 'Deoxy', 'TN', 'HER2', 'ER', '%Thb1', \
-               '%THb2', '%Thb3', '%US1', '%US2', '%US3']
-    #Features = ['TN', 'HER2', 'ER', '%Thb3', '%US1']
+             '%US1']
     with open('Patient_names.txt', 'r') as file:
         for line in file:
             P_ID.append(line[:-1])
